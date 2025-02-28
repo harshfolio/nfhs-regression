@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objs as go
+import seaborn as sns
+import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
@@ -71,6 +73,58 @@ def perform_regression(X, y):
         'R-squared': model.score(X_scaled, y)
     }
 
+# Create correlation heatmap
+def create_correlation_heatmap(df):
+    # Select numeric columns
+    numeric_cols = ['education_years', 'children', 'age', 'bmi']
+    corr_matrix = df[numeric_cols].corr()
+    
+    # Create figure
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, 
+                square=True, linewidths=0.5, cbar_kws={"shrink": .8})
+    plt.title('Correlation Heatmap of Numeric Variables')
+    return plt.gcf()
+
+# Create pairplot
+def create_pairplot(df):
+    # Select numeric columns
+    numeric_cols = ['education_years', 'children', 'age', 'bmi']
+    
+    # Create figure
+    plt.figure(figsize=(12, 10))
+    plot_df = df[numeric_cols + ['residence']]
+    
+    # Use seaborn pairplot
+    g = sns.pairplot(plot_df, hue='residence', 
+                     plot_kws={'alpha': 0.5},
+                     diag_kws={'alpha': 0.7})
+    g.fig.suptitle('Pairplot of Numeric Variables by Residence', y=1.02)
+    return g.fig
+
+# Boxplot comparison
+def create_boxplot_comparison(df):
+    # Prepare figure
+    plt.figure(figsize=(12, 6))
+    
+    # Create subplot grid
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    fig.suptitle('Boxplots of Variables by Residence', fontsize=16)
+    
+    # Variables to plot
+    variables = ['education_years', 'children', 'age', 'bmi']
+    
+    # Create boxplots
+    for i, var in enumerate(variables):
+        row = i // 2
+        col = i % 2
+        
+        sns.boxplot(x='residence', y=var, data=df, ax=axes[row, col])
+        axes[row, col].set_title(f'{var.replace("_", " ").title()} by Residence')
+    
+    plt.tight_layout()
+    return fig
+
 # Main app
 def main():
     st.markdown('<div class="main-header">NFHS-4 Data Analysis Dashboard</div>', unsafe_allow_html=True)
@@ -86,7 +140,9 @@ def main():
         [
             "Descriptive Statistics", 
             "Distribution Analysis", 
-            "Regression Analysis"
+            "Regression Analysis",
+            "Correlation & Visualization",
+            "Comparative Graphs"
         ]
     )
     
@@ -217,6 +273,52 @@ def main():
             )
             
             st.plotly_chart(scatter_fig, use_container_width=True)
+    
+    # Correlation & Visualization
+    elif analysis_type == "Correlation & Visualization":
+        st.header("Correlation & Advanced Visualizations")
+        
+        # Correlation Heatmap
+        st.subheader("Correlation Heatmap")
+        corr_heatmap = create_correlation_heatmap(df)
+        st.pyplot(corr_heatmap)
+        
+        # Pairplot
+        st.subheader("Pairplot of Variables")
+        pairplot = create_pairplot(df)
+        st.pyplot(pairplot)
+    
+    # Comparative Graphs
+    elif analysis_type == "Comparative Graphs":
+        st.header("Comparative Visualizations")
+        
+        # Boxplot Comparison
+        st.subheader("Boxplots by Residence")
+        boxplot_fig = create_boxplot_comparison(df)
+        st.pyplot(boxplot_fig)
+        
+        # Bar chart comparing means
+        st.subheader("Mean Comparison by Residence")
+        
+        # Variables to compare
+        compare_vars = ['education_years', 'children', 'age', 'bmi']
+        
+        # Prepare data for comparison
+        means_by_residence = df.groupby('residence')[compare_vars].mean()
+        
+        # Create bar chart
+        fig = px.bar(
+            means_by_residence.reset_index(), 
+            x='residence', 
+            y=compare_vars,
+            title='Mean Comparison of Variables by Residence',
+            barmode='group'
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display the means
+        st.dataframe(means_by_residence)
 
 if __name__ == "__main__":
     main()
