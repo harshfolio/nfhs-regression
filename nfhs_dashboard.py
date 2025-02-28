@@ -93,8 +93,8 @@ def calculate_stats(df):
     stats['total_records'] = len(df)
     stats['urban_count'] = df[df['residence'] == 'urban'].shape[0]
     stats['rural_count'] = df[df['residence'] == 'rural'].shape[0]
-    stats['urban_percent'] = round(stats['urban_count'] / stats['total_records'] * 100, 1)
-    stats['rural_percent'] = round(stats['rural_count'] / stats['total_records'] * 100, 1)
+    stats['urban_percent'] = round((stats['urban_count'] / stats['total_records'] * 100), 1)
+    stats['rural_percent'] = round((stats['rural_count'] / stats['total_records'] * 100), 1)
     
     # Education statistics
     stats['avg_education_urban'] = round(df[df['residence'] == 'urban']['education_years'].mean(), 1)
@@ -102,8 +102,8 @@ def calculate_stats(df):
     
     urban_no_education = df[(df['residence'] == 'urban') & (df['education_years'] == 0)].shape[0]
     rural_no_education = df[(df['residence'] == 'rural') & (df['education_years'] == 0)].shape[0]
-    stats['no_education_urban_percent'] = round(urban_no_education / stats['urban_count'] * 100, 1)
-    stats['no_education_rural_percent'] = round(rural_no_education / stats['rural_count'] * 100, 1)
+    stats['no_education_urban_percent'] = round((urban_no_education / stats['urban_count'] * 100), 1)
+    stats['no_education_rural_percent'] = round((rural_no_education / stats['rural_count'] * 100), 1)
     
     # Fertility statistics
     stats['avg_children_urban'] = round(df[df['residence'] == 'urban']['children'].mean(), 2)
@@ -111,7 +111,7 @@ def calculate_stats(df):
     
     # BMI statistics (only for non-null values)
     valid_bmi = df[df['bmi'].notna()]
-    stats['bmi_available_percent'] = round(len(valid_bmi) / stats['total_records'] * 100, 1)
+    stats['bmi_available_percent'] = round((len(valid_bmi) / stats['total_records'] * 100), 1)
     
     if len(valid_bmi) > 0:
         stats['avg_bmi_urban'] = round(valid_bmi[valid_bmi['residence'] == 'urban']['bmi'].mean(), 1)
@@ -169,8 +169,8 @@ def plot_education_distribution(df):
     total_rural = edu_counts[edu_counts['residence'] == 'rural']['count'].sum()
     
     edu_counts['percentage'] = edu_counts.apply(
-        lambda x: (x['count'] / total_urban * 100) if x['residence'] == 'urban' 
-                 else (x['count'] / total_rural * 100), 
+        lambda x: round((x['count'] / total_urban * 100), 1) if x['residence'] == 'urban' 
+                 else round((x['count'] / total_rural * 100), 1), 
         axis=1
     )
     
@@ -293,8 +293,8 @@ def plot_age_distribution(df):
     total_rural = age_counts[age_counts['residence'] == 'rural']['count'].sum()
     
     age_counts['percentage'] = age_counts.apply(
-        lambda x: (x['count'] / total_urban * 100) if x['residence'] == 'urban' 
-                 else (x['count'] / total_rural * 100), 
+        lambda x: round((x['count'] / total_urban * 100), 1) if x['residence'] == 'urban' 
+                 else round((x['count'] / total_rural * 100), 1), 
         axis=1
     )
     
@@ -347,7 +347,7 @@ def plot_bmi_distribution(df):
         color='bmi_category',
         color_discrete_sequence=['#F44336', '#4CAF50', '#FFC107', '#1E88E5'],
         category_orders={'bmi_category': category_order},
-                    title=f'BMI Distribution (Available for {round(len(valid_bmi_df) / len(df) * 100, 1)}% of respondents)'
+        title=f'BMI Distribution (Available for {round(len(valid_bmi_df) / len(df) * 100, 1)}% of respondents)'
     )
     
     fig.update_traces(textposition='inside', textinfo='percent+label')
@@ -716,7 +716,7 @@ def main():
             valid_bmi_df['bmi_category'] = valid_bmi_df['bmi'].apply(categorize_bmi)
             
             bmi_dist = valid_bmi_df.groupby('bmi_category').size().reset_index(name='count')
-            bmi_dist['percentage'] = (bmi_dist['count'] / bmi_dist['count'].sum() * 100).round(1)
+            bmi_dist['percentage'] = bmi_dist['count'].apply(lambda x: round(x / bmi_dist['count'].sum() * 100, 1))
             
             st.dataframe(
                 bmi_dist[['bmi_category', 'count', 'percentage']].rename(
