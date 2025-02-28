@@ -93,29 +93,29 @@ def calculate_stats(df):
     stats['total_records'] = len(df)
     stats['urban_count'] = df[df['residence'] == 'urban'].shape[0]
     stats['rural_count'] = df[df['residence'] == 'rural'].shape[0]
-    stats['urban_percent'] = (stats['urban_count'] / stats['total_records'] * 100).round(1)
-    stats['rural_percent'] = (stats['rural_count'] / stats['total_records'] * 100).round(1)
+    stats['urban_percent'] = round(stats['urban_count'] / stats['total_records'] * 100, 1)
+    stats['rural_percent'] = round(stats['rural_count'] / stats['total_records'] * 100, 1)
     
     # Education statistics
-    stats['avg_education_urban'] = df[df['residence'] == 'urban']['education_years'].mean().round(1)
-    stats['avg_education_rural'] = df[df['residence'] == 'rural']['education_years'].mean().round(1)
+    stats['avg_education_urban'] = round(df[df['residence'] == 'urban']['education_years'].mean(), 1)
+    stats['avg_education_rural'] = round(df[df['residence'] == 'rural']['education_years'].mean(), 1)
     
     urban_no_education = df[(df['residence'] == 'urban') & (df['education_years'] == 0)].shape[0]
     rural_no_education = df[(df['residence'] == 'rural') & (df['education_years'] == 0)].shape[0]
-    stats['no_education_urban_percent'] = (urban_no_education / stats['urban_count'] * 100).round(1)
-    stats['no_education_rural_percent'] = (rural_no_education / stats['rural_count'] * 100).round(1)
+    stats['no_education_urban_percent'] = round(urban_no_education / stats['urban_count'] * 100, 1)
+    stats['no_education_rural_percent'] = round(rural_no_education / stats['rural_count'] * 100, 1)
     
     # Fertility statistics
-    stats['avg_children_urban'] = df[df['residence'] == 'urban']['children'].mean().round(2)
-    stats['avg_children_rural'] = df[df['residence'] == 'rural']['children'].mean().round(2)
+    stats['avg_children_urban'] = round(df[df['residence'] == 'urban']['children'].mean(), 2)
+    stats['avg_children_rural'] = round(df[df['residence'] == 'rural']['children'].mean(), 2)
     
     # BMI statistics (only for non-null values)
     valid_bmi = df[df['bmi'].notna()]
-    stats['bmi_available_percent'] = (len(valid_bmi) / stats['total_records'] * 100).round(1)
+    stats['bmi_available_percent'] = round(len(valid_bmi) / stats['total_records'] * 100, 1)
     
     if len(valid_bmi) > 0:
-        stats['avg_bmi_urban'] = valid_bmi[valid_bmi['residence'] == 'urban']['bmi'].mean().round(1)
-        stats['avg_bmi_rural'] = valid_bmi[valid_bmi['residence'] == 'rural']['bmi'].mean().round(1)
+        stats['avg_bmi_urban'] = round(valid_bmi[valid_bmi['residence'] == 'urban']['bmi'].mean(), 1)
+        stats['avg_bmi_rural'] = round(valid_bmi[valid_bmi['residence'] == 'rural']['bmi'].mean(), 1)
     else:
         stats['avg_bmi_urban'] = None
         stats['avg_bmi_rural'] = None
@@ -209,7 +209,7 @@ def plot_children_by_education(df):
     
     # Calculate average children by education category
     children_by_edu = df.groupby('education_category')['children'].mean().reset_index()
-    children_by_edu['children'] = children_by_edu['children'].round(2)
+    children_by_edu['children'] = children_by_edu['children'].apply(lambda x: round(x, 2))
     
     # Order categories
     category_order = ['No education', 'Primary (1-5 yrs)', 'Secondary (6-12 yrs)', 'Higher (12+ yrs)']
@@ -246,7 +246,7 @@ def plot_children_by_education(df):
 def plot_education_vs_children(df):
     # Group by education years
     edu_children = df.groupby('education_years')['children'].agg(['mean', 'count']).reset_index()
-    edu_children['mean'] = edu_children['mean'].round(2)
+    edu_children['mean'] = edu_children['mean'].apply(lambda x: round(x, 2))
     
     # Create plot
     fig = px.scatter(
@@ -334,7 +334,7 @@ def plot_bmi_distribution(df):
     
     # Count by BMI category
     bmi_counts = valid_bmi_df.groupby('bmi_category').size().reset_index(name='count')
-    bmi_counts['percentage'] = (bmi_counts['count'] / bmi_counts['count'].sum() * 100).round(1)
+    bmi_counts['percentage'] = bmi_counts['count'].apply(lambda x: round(x / bmi_counts['count'].sum() * 100, 1))
     
     # Order categories
     category_order = ['Underweight', 'Normal', 'Overweight', 'Obese']
@@ -347,7 +347,7 @@ def plot_bmi_distribution(df):
         color='bmi_category',
         color_discrete_sequence=['#F44336', '#4CAF50', '#FFC107', '#1E88E5'],
         category_orders={'bmi_category': category_order},
-        title=f'BMI Distribution (Available for {(len(valid_bmi_df) / len(df) * 100).round(1)}% of respondents)'
+                    title=f'BMI Distribution (Available for {round(len(valid_bmi_df) / len(df) * 100, 1)}% of respondents)'
     )
     
     fig.update_traces(textposition='inside', textinfo='percent+label')
