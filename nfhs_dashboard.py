@@ -8,6 +8,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
+import io
 
 # Page configuration
 st.set_page_config(page_title="Flexible Data Analysis Dashboard", page_icon="📊", layout="wide")
@@ -159,206 +160,229 @@ def main():
     # Sidebar for file upload and configuration
     st.sidebar.header("Data Configuration")
     
-    # File uploader
-    uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+    # Sample data option
+    use_sample_data = st.sidebar.checkbox("Use Sample NFHS-4 Data", value=True)
     
-    if uploaded_file is not None:
-        # Read the CSV file
+    # File uploader or sample data
+    if use_sample_data:
+        # Predefined NFHS-4 sample data
+        data = {
+            'residence': ['urban', 'rural', 'urban', 'rural', 'urban', 'rural', 'urban', 'rural', 'urban', 'rural'],
+            'education_years': [10, 5, 12, 0, 16, 3, 8, 2, 14, 1],
+            'children': [2, 3, 1, 4, 1, 5, 2, 4, 1, 3],
+            'age': [25, 30, 35, 40, 28, 33, 32, 38, 29, 36],
+            'bmi': [22.5, 24.1, 21.8, 26.3, 23.4, 25.6, 22.1, 24.8, 21.9, 25.2]
+        }
+        df = pd.DataFrame(data)
+        st.sidebar.info("Using sample NFHS-4 like dataset")
+    else:
+        # File uploader
+        uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+        
+        if uploaded_file is None:
+            st.warning("Please upload a CSV file or check 'Use Sample NFHS-4 Data'")
+            return
+        
         try:
+            # Read the uploaded file
             df = pd.read_csv(uploaded_file)
+        except Exception as e:
+            st.error(f"Error reading the file: {e}")
+            return
+    
+    # Allow column renaming
+    st.sidebar.header("Rename Columns (Optional)")
+    renamed_columns = {}
+    for col in df.columns:
+        new_name = st.sidebar.text_input(f"Rename '{col}' to:", col)
+        renamed_columns[col] = new_name
+    
+    # Rename columns if needed
+    df.columns = [renamed_columns.get(col, col) for col in df.columns]
+    
+    # Select analysis type
+    analysis_type = st.sidebar.selectbox(
+        "Select Analysis Type",
+        [
+            "Descriptive Statistics", 
+            "Regression Analysis",
+            "Correlation Analysis",
+            "Distribution Comparison"
+        ]
+    )
+    
+    # Identify numeric columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    # Descriptive Statistics
+    if analysis_type == "Descriptive Statistics":
+        st.header("Descriptive Statistics")
+        
+        # Select numeric columns for analysis
+        columns_to_analyze = st.multiselect(
+            "Select Columns for Analysis",
+            numeric_cols,
+            default=numeric_cols[:min(3, len(numeric_cols))]
+        )
+        
+        # Display statistics for selected columns
+        for column in columns_to_analyze:
+            st.subheader(f"Descriptive Statistics for {column}")
             
-            # Allow column renaming
-            st.sidebar.header("Rename Columns (Optional)")
-            renamed_columns = {}
-            for col in df.columns:
-                new_name = st.sidebar.text_input(f"Rename '{col}' to:", col)
-                renamed_columns[col] = new_name
+            # Get detailed statistics
+            stats = get_detailed_stats(df[column])
             
-            # Rename columns if needed
-            df.columns = [renamed_columns.get(col, col) for col in df.columns]
+            # Display stats in a grid
+            cols = st.columns(len(stats))
+            for i, (stat_name, stat_value) in enumerate(stats.items()):
+                with cols[i]:
+                    st.markdown(f"""
+                    <div class="stat-card">
+                        <div class="stat-value">{stat_value:.2f}</div>
+                        <div class="stat-label">{stat_name}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+    
+    # Regression Analysis
+    elif analysis_type == "Regression Analysis":
+        st.header("Regression Analysis")
+        
+        # Select variables for regression
+        st.subheader("Select Variables for Regression")
+        
+        # X variables (predictors)
+        x_columns = st.multiselect(
+            "Select Predictor Variables (X)",
+            numeric_cols,
+            default=numeric_cols[:len(numeric_cols)//2] if len(numeric_cols) > 1 else numeric_cols
+        )
+        
+        # Y variable (target)
+        y_column = st.selectbox(
+            "Select Target Variable (Y)",
+            numeric_cols,
+            index=len(numeric_cols)//2 if len(numeric_cols) > 1 else 0
+        )
+        
+        # Color by categorical variable (optional)
+        color_column = st.selectbox(
+            "Optional: Color by Categorical Variable",
+            ['None'] + categorical_cols,
+            index=0
+        )
+        color_column = color_column if color_column != 'None' else None
+        
+        # Perform regression if variables are selected
+        if x_columns and y_column and x_columns != [y_column]:
+            # Prepare data
+            X = df[x_columns]
+            y = df[y_column]
             
-            # Select analysis type
-            analysis_type = st.sidebar.selectbox(
-                "Select Analysis Type",
-                [
-                    "Descriptive Statistics", 
-                    "Regression Analysis",
-                    "Correlation Analysis",
-                    "Distribution Comparison"
-                ]
+            # Split the data
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            
+            # Perform regression
+            reg = LinearRegression().fit(X_train, y_train)
+            
+            # Predictions
+            y_pred = reg.predict(X_test)
+            
+            # Evaluation metrics
+            mse = mean_squared_error(y_test, y_pred)
+            r_squared = r2_score(y_test, y_pred)
+            
+            # Display regression results
+            st.subheader("Regression Results")
+            
+            # Coefficients
+            coef_df = pd.DataFrame({
+                'Predictor': x_columns,
+                'Coefficient': reg.coef_
+            })
+            st.dataframe(coef_df)
+            
+            # Metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("R-squared", f"{r_squared:.4f}")
+            with col2:
+                st.metric("Mean Squared Error", f"{mse:.4f}")
+            
+            # Create scatter plots for each predictor
+            for x_col in x_columns:
+                # Create scatter plot
+                scatter_fig, _, r_sq = create_scatter_with_regression(
+                    df, x_col, y_column, 
+                    color_col=color_column
+                )
+                st.plotly_chart(scatter_fig, use_container_width=True)
+    
+    # Correlation Analysis
+    elif analysis_type == "Correlation Analysis":
+        st.header("Correlation Analysis")
+        
+        # Create correlation heatmap
+        corr_fig = create_correlation_heatmap(df[numeric_cols])
+        st.plotly_chart(corr_fig, use_container_width=True)
+        
+        # Interpretation of correlations
+        st.subheader("Correlation Insights")
+        corr_matrix = df[numeric_cols].corr()
+        
+        # Find strongest correlations
+        corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_pairs.append((
+                    corr_matrix.columns[i], 
+                    corr_matrix.columns[j], 
+                    corr_matrix.iloc[i, j]
+                ))
+        
+        # Sort by absolute correlation
+        sorted_corr = sorted(corr_pairs, key=lambda x: abs(x[2]), reverse=True)
+        
+        # Display top correlations
+        st.write("Top Correlations:")
+        for var1, var2, corr_value in sorted_corr[:5]:
+            st.markdown(f"- **{var1}** and **{var2}**: {corr_value:.4f}")
+    
+    # Distribution Comparison
+    elif analysis_type == "Distribution Comparison":
+        st.header("Distribution Comparison")
+        
+        # Select numeric column to compare
+        numeric_column = st.selectbox(
+            "Select Numeric Variable", 
+            numeric_cols
+        )
+        
+        # Select categorical column for comparison
+        if categorical_cols:
+            category_column = st.selectbox(
+                "Compare by Categorical Variable", 
+                categorical_cols
             )
             
-            # Identify numeric columns
-            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-            categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+            # Create boxplot
+            boxplot_fig = create_boxplot(df, numeric_column, category_column)
+            st.plotly_chart(boxplot_fig, use_container_width=True)
             
-            # Descriptive Statistics
-            if analysis_type == "Descriptive Statistics":
-                st.header("Descriptive Statistics")
-                
-                # Select numeric columns for analysis
-                columns_to_analyze = st.multiselect(
-                    "Select Columns for Analysis",
-                    numeric_cols,
-                    default=numeric_cols[:min(3, len(numeric_cols))]
-                )
-                
-                # Display statistics for selected columns
-                for column in columns_to_analyze:
-                    st.subheader(f"Descriptive Statistics for {column}")
-                    
-                    # Get detailed statistics
-                    stats = get_detailed_stats(df[column])
-                    
-                    # Display stats in a grid
-                    cols = st.columns(len(stats))
-                    for i, (stat_name, stat_value) in enumerate(stats.items()):
-                        with cols[i]:
-                            st.markdown(f"""
-                            <div class="stat-card">
-                                <div class="stat-value">{stat_value:.2f}</div>
-                                <div class="stat-label">{stat_name}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
-            
-            # Regression Analysis
-            elif analysis_type == "Regression Analysis":
-                st.header("Regression Analysis")
-                
-                # Select variables for regression
-                st.subheader("Select Variables for Regression")
-                
-                # X variables (predictors)
-                x_columns = st.multiselect(
-                    "Select Predictor Variables (X)",
-                    numeric_cols,
-                    default=numeric_cols[:len(numeric_cols)//2] if len(numeric_cols) > 1 else numeric_cols
-                )
-                
-                # Y variable (target)
-                y_column = st.selectbox(
-                    "Select Target Variable (Y)",
-                    numeric_cols,
-                    index=len(numeric_cols)//2 if len(numeric_cols) > 1 else 0
-                )
-                
-                # Color by categorical variable (optional)
-                color_column = st.selectbox(
-                    "Optional: Color by Categorical Variable",
-                    ['None'] + categorical_cols,
-                    index=0
-                )
-                color_column = color_column if color_column != 'None' else None
-                
-                # Perform regression if variables are selected
-                if x_columns and y_column and x_columns != [y_column]:
-                    # Prepare data
-                    X = df[x_columns]
-                    y = df[y_column]
-                    
-                    # Split the data
-                    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-                    
-                    # Perform regression
-                    reg = LinearRegression().fit(X_train, y_train)
-                    
-                    # Predictions
-                    y_pred = reg.predict(X_test)
-                    
-                    # Evaluation metrics
-                    mse = mean_squared_error(y_test, y_pred)
-                    r_squared = r2_score(y_test, y_pred)
-                    
-                    # Display regression results
-                    st.subheader("Regression Results")
-                    
-                    # Coefficients
-                    coef_df = pd.DataFrame({
-                        'Predictor': x_columns,
-                        'Coefficient': reg.coef_
-                    })
-                    st.dataframe(coef_df)
-                    
-                    # Metrics
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("R-squared", f"{r_squared:.4f}")
-                    with col2:
-                        st.metric("Mean Squared Error", f"{mse:.4f}")
-                    
-                    # Create scatter plots for each predictor
-                    for x_col in x_columns:
-                        # Create scatter plot
-                        scatter_fig, _, r_sq = create_scatter_with_regression(
-                            df, x_col, y_column, 
-                            color_col=color_column
-                        )
-                        st.plotly_chart(scatter_fig, use_container_width=True)
-            
-            # Correlation Analysis
-            elif analysis_type == "Correlation Analysis":
-                st.header("Correlation Analysis")
-                
-                # Create correlation heatmap
-                corr_fig = create_correlation_heatmap(df[numeric_cols])
-                st.plotly_chart(corr_fig, use_container_width=True)
-                
-                # Interpretation of correlations
-                st.subheader("Correlation Insights")
-                corr_matrix = df[numeric_cols].corr()
-                
-                # Find strongest correlations
-                corr_pairs = []
-                for i in range(len(corr_matrix.columns)):
-                    for j in range(i+1, len(corr_matrix.columns)):
-                        corr_pairs.append((
-                            corr_matrix.columns[i], 
-                            corr_matrix.columns[j], 
-                            corr_matrix.iloc[i, j]
-                        ))
-                
-                # Sort by absolute correlation
-                sorted_corr = sorted(corr_pairs, key=lambda x: abs(x[2]), reverse=True)
-                
-                # Display top correlations
-                st.write("Top Correlations:")
-                for var1, var2, corr_value in sorted_corr[:5]:
-                    st.markdown(f"- **{var1}** and **{var2}**: {corr_value:.4f}")
-            
-            # Distribution Comparison
-            elif analysis_type == "Distribution Comparison":
-                st.header("Distribution Comparison")
-                
-                # Select numeric column to compare
-                numeric_column = st.selectbox(
-                    "Select Numeric Variable", 
-                    numeric_cols
-                )
-                
-                # Select categorical column for comparison
-                if categorical_cols:
-                    category_column = st.selectbox(
-                        "Compare by Categorical Variable", 
-                        categorical_cols
-                    )
-                    
-                    # Create boxplot
-                    boxplot_fig = create_boxplot(df, numeric_column, category_column)
-                    st.plotly_chart(boxplot_fig, use_container_width=True)
-                    
-                    # Compute and display summary statistics
-                    st.subheader("Summary Statistics")
-                    grouped_stats = df.groupby(category_column)[numeric_column].agg([
-                        'mean', 'median', 'std', 'min', 'max'
-                    ]).round(2)
-                    st.dataframe(grouped_stats)
-                else:
-                    st.warning("No categorical columns found for comparison.")
-        
-        except Exception as e:
-            st.error(f"Error processing the file: {e}")
-    else:
-        st.info("Please upload a CSV file to begin analysis.")
+            # Compute and display summary statistics
+            st.subheader("Summary Statistics")
+            grouped_stats = df.groupby(category_column)[numeric_column].agg([
+                'mean', 'median', 'std', 'min', 'max'
+            ]).round(2)
+            st.dataframe(grouped_stats)
+        else:
+            st.warning("No categorical columns found for comparison.")
+
+    # Raw Data View
+    st.sidebar.header("Data Preview")
+    if st.sidebar.checkbox("Show Raw Data"):
+        st.subheader("Raw Data")
+        st.dataframe(df)
 
 if __name__ == "__main__":
     main()
