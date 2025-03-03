@@ -3,8 +3,10 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objs as go
+from plotly.subplots import make_subplots
 import seaborn as sns
 import matplotlib.pyplot as plt
+from scipy import stats
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 
@@ -21,17 +23,22 @@ st.markdown("""
     text-align: center;
     margin-bottom: 1rem;
 }
-.metric-card {
+.stat-card {
     background-color: #f0f8ff;
     border-radius: 10px;
     padding: 1rem;
     text-align: center;
-    box-shadow: 0 0.15rem 1.75rem 0 rgba(58, 59, 69, 0.1);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    margin-bottom: 1rem;
 }
-.metric-value {
+.stat-value {
     font-size: 1.5rem;
     font-weight: bold;
     color: #1E88E5;
+}
+.stat-label {
+    font-size: 0.9rem;
+    color: #666;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -47,85 +54,114 @@ def load_data():
         st.error(f"Error loading data: {e}")
         return None
 
-# Descriptive statistics function
-def get_descriptive_stats(df, column):
+# Comprehensive descriptive statistics
+def get_detailed_stats(df, column):
     return {
         'Mean': df[column].mean(),
         'Median': df[column].median(),
         'Standard Deviation': df[column].std(),
         'Minimum': df[column].min(),
-        'Maximum': df[column].max()
+        'Maximum': df[column].max(),
+        'Skewness': df[column].skew(),
+        'Kurtosis': df[column].kurtosis()
     }
 
-# Regression analysis
-def perform_regression(X, y):
-    # Standardize the features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+# Create scatter plot with regression line
+def create_scatter_with_regression(df, x_col, y_col):
+    # Prepare data
+    X = df[x_col].values.reshape(-1, 1)
+    y = df[y_col].values
     
     # Perform linear regression
-    model = LinearRegression()
-    model.fit(X_scaled, y)
+    reg = LinearRegression().fit(X, y)
+    y_pred = reg.predict(X)
     
-    return {
-        'Coefficients': model.coef_,
-        'Intercept': model.intercept_,
-        'R-squared': model.score(X_scaled, y)
-    }
+    # Calculate R-squared
+    r_squared = reg.score(X, y)
+    
+    # Create scatter plot with regression line
+    fig = go.Figure()
+    
+    # Scatter plot points
+    fig.add_trace(go.Scatter(
+        x=df[x_col], 
+        y=df[y_col],
+        mode='markers',
+        name='Data Points',
+        marker=dict(
+            color=df['residence'].map({'urban': '#1E88E5', 'rural': '#FFC107'}),
+            opacity=0.7
+        )
+    ))
+    
+    # Regression line
+    fig.add_trace(go.Scatter(
+        x=df[x_col], 
+        y=y_pred,
+        mode='lines',
+        name='Regression Line',
+        line=dict(color='red', dash='dash')
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f'Scatter Plot: {x_col} vs {y_col} with Regression Line',
+        xaxis_title=x_col.replace('_', ' ').title(),
+        yaxis_title=y_col.replace('_', ' ').title(),
+        annotations=[
+            dict(
+                x=0.05,
+                y=0.95,
+                xref='paper',
+                yref='paper',
+                text=f'R² = {r_squared:.4f}',
+                showarrow=False,
+                font=dict(size=12)
+            )
+        ]
+    )
+    
+    return fig
 
-# Create correlation heatmap
+# Correlation heatmap
 def create_correlation_heatmap(df):
     # Select numeric columns
     numeric_cols = ['education_years', 'children', 'age', 'bmi']
     corr_matrix = df[numeric_cols].corr()
     
-    # Create figure
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, 
-                square=True, linewidths=0.5, cbar_kws={"shrink": .8})
-    plt.title('Correlation Heatmap of Numeric Variables')
-    return plt.gcf()
-
-# Create pairplot
-def create_pairplot(df):
-    # Select numeric columns
-    numeric_cols = ['education_years', 'children', 'age', 'bmi']
+    # Create heatmap
+    fig = go.Figure(data=go.Heatmap(
+        z=corr_matrix.values,
+        x=corr_matrix.columns,
+        y=corr_matrix.columns,
+        colorscale='RdBu_r',
+        zmin=-1, 
+        zmax=1,
+        text=corr_matrix.values.round(2),
+        texttemplate='%{text}',
+        textfont={'size':10},
+    ))
     
-    # Create figure
-    plt.figure(figsize=(12, 10))
-    plot_df = df[numeric_cols + ['residence']]
+    fig.update_layout(
+        title='Correlation Heatmap of Numeric Variables',
+        height=500
+    )
     
-    # Use seaborn pairplot
-    g = sns.pairplot(plot_df, hue='residence', 
-                     plot_kws={'alpha': 0.5},
-                     diag_kws={'alpha': 0.7})
-    g.fig.suptitle('Pairplot of Numeric Variables by Residence', y=1.02)
-    return g.fig
-
-# Boxplot comparison
-def create_boxplot_comparison(df):
-    # Prepare figure
-    plt.figure(figsize=(12, 6))
-    
-    # Create subplot grid
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('Boxplots of Variables by Residence', fontsize=16)
-    
-    # Variables to plot
-    variables = ['education_years', 'children', 'age', 'bmi']
-    
-    # Create boxplots
-    for i, var in enumerate(variables):
-        row = i // 2
-        col = i % 2
-        
-        sns.boxplot(x='residence', y=var, data=df, ax=axes[row, col])
-        axes[row, col].set_title(f'{var.replace("_", " ").title()} by Residence')
-    
-    plt.tight_layout()
     return fig
 
-# Main app
+# Box plot by residence
+def create_boxplot_by_residence(df, column):
+    fig = px.box(
+        df, 
+        x='residence', 
+        y=column, 
+        title=f'Distribution of {column} by Residence',
+        color='residence',
+        color_discrete_sequence=['#1E88E5', '#FFC107']
+    )
+    return fig
+
+# Main Streamlit app
 def main():
     st.markdown('<div class="main-header">NFHS-4 Data Analysis Dashboard</div>', unsafe_allow_html=True)
     
@@ -134,15 +170,14 @@ def main():
     if df is None:
         return
     
-    # Sidebar for navigation
+    # Sidebar for analysis type
     analysis_type = st.sidebar.selectbox(
         "Select Analysis Type",
         [
             "Descriptive Statistics", 
-            "Distribution Analysis", 
-            "Regression Analysis",
-            "Correlation & Visualization",
-            "Comparative Graphs"
+            "Scatter & Regression Analysis",
+            "Correlation Analysis",
+            "Distribution Comparison"
         ]
     )
     
@@ -157,168 +192,110 @@ def main():
             default=['education_years', 'children']
         )
         
-        # Display statistics for selected columns
-        for col in columns_to_analyze:
-            st.subheader(f"Descriptive Statistics for {col}")
-            stats = get_descriptive_stats(df, col)
+        # Create columns for stats display
+        for column in columns_to_analyze:
+            st.subheader(f"Descriptive Statistics for {column}")
             
-            # Create columns for metrics
+            # Get detailed statistics
+            stats = get_detailed_stats(df, column)
+            
+            # Display stats in a grid
             cols = st.columns(len(stats))
             for i, (stat_name, stat_value) in enumerate(stats.items()):
                 with cols[i]:
                     st.markdown(f"""
-                    <div class="metric-card">
-                        <div class="metric-value">{stat_value:.2f}</div>
-                        <div>{stat_name}</div>
+                    <div class="stat-card">
+                        <div class="stat-value">{stat_value:.2f}</div>
+                        <div class="stat-label">{stat_name}</div>
                     </div>
                     """, unsafe_allow_html=True)
     
-    # Distribution Analysis
-    elif analysis_type == "Distribution Analysis":
-        st.header("Distribution Analysis")
+    # Scatter & Regression Analysis
+    elif analysis_type == "Scatter & Regression Analysis":
+        st.header("Scatter Plots with Regression Analysis")
         
-        # Select column for distribution
+        # Select variables for scatter plot
+        x_column = st.selectbox("Select X-axis Variable", 
+            ['education_years', 'children', 'age', 'bmi'])
+        y_column = st.selectbox("Select Y-axis Variable", 
+            ['children', 'education_years', 'age', 'bmi'], 
+            index=0 if x_column != 'children' else 1)
+        
+        # Ensure different variables are selected
+        if x_column == y_column:
+            st.warning("Please select different variables for X and Y axes.")
+        else:
+            # Create scatter plot with regression line
+            scatter_fig = create_scatter_with_regression(df, x_column, y_column)
+            st.plotly_chart(scatter_fig, use_container_width=True)
+            
+            # Additional statistical insights
+            X = df[x_column].values.reshape(-1, 1)
+            y = df[y_column].values
+            
+            # Perform linear regression
+            reg = LinearRegression().fit(X, y)
+            
+            # Calculate correlation
+            correlation, p_value = stats.pearsonr(df[x_column], df[y_column])
+            
+            st.subheader("Regression Insights")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Correlation Coefficient", f"{correlation:.4f}")
+            with col2:
+                st.metric("P-value", f"{p_value:.4f}")
+    
+    # Correlation Analysis
+    elif analysis_type == "Correlation Analysis":
+        st.header("Correlation Analysis")
+        
+        # Create correlation heatmap
+        corr_fig = create_correlation_heatmap(df)
+        st.plotly_chart(corr_fig, use_container_width=True)
+        
+        # Interpretation of correlations
+        st.subheader("Correlation Interpretation")
+        corr_matrix = df[['education_years', 'children', 'age', 'bmi']].corr()
+        
+        # Find strongest correlations
+        corr_pairs = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_pairs.append((
+                    corr_matrix.columns[i], 
+                    corr_matrix.columns[j], 
+                    corr_matrix.iloc[i, j]
+                ))
+        
+        # Sort by absolute correlation
+        sorted_corr = sorted(corr_pairs, key=lambda x: abs(x[2]), reverse=True)
+        
+        # Display top correlations
+        st.write("Top Correlations:")
+        for var1, var2, corr_value in sorted_corr[:3]:
+            st.markdown(f"- **{var1}** and **{var2}**: {corr_value:.4f}")
+    
+    # Distribution Comparison
+    elif analysis_type == "Distribution Comparison":
+        st.header("Distribution Comparison by Residence")
+        
+        # Select column for distribution comparison
         dist_column = st.selectbox(
-            "Select Column for Distribution",
+            "Select Variable to Compare", 
             ['education_years', 'children', 'age', 'bmi']
         )
         
-        # Color by residence
-        color_by_residence = st.checkbox("Color by Residence", value=True)
+        # Create boxplot
+        boxplot_fig = create_boxplot_by_residence(df, dist_column)
+        st.plotly_chart(boxplot_fig, use_container_width=True)
         
-        # Create distribution plot
-        if color_by_residence:
-            fig = px.histogram(
-                df, 
-                x=dist_column, 
-                color='residence', 
-                marginal='box',
-                title=f'Distribution of {dist_column}',
-                labels={dist_column: dist_column.replace('_', ' ').title()}
-            )
-        else:
-            fig = px.histogram(
-                df, 
-                x=dist_column, 
-                marginal='box',
-                title=f'Distribution of {dist_column}',
-                labels={dist_column: dist_column.replace('_', ' ').title()}
-            )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Descriptive statistics
-        stats = get_descriptive_stats(df, dist_column)
-        st.subheader("Descriptive Statistics")
-        st.json(stats)
-    
-    # Regression Analysis
-    elif analysis_type == "Regression Analysis":
-        st.header("Regression Analysis")
-        
-        # Select target variable
-        target_var = st.selectbox(
-            "Select Target Variable",
-            ['children', 'education_years', 'bmi']
-        )
-        
-        # Select predictor variables
-        predictor_vars = st.multiselect(
-            "Select Predictor Variables",
-            [col for col in ['education_years', 'children', 'age', 'bmi'] if col != target_var],
-            default=['education_years', 'age']
-        )
-        
-        # Perform regression
-        if predictor_vars:
-            X = df[predictor_vars]
-            y = df[target_var]
-            
-            regression_results = perform_regression(X, y)
-            
-            st.subheader("Regression Results")
-            
-            # Display coefficients
-            coef_df = pd.DataFrame({
-                'Predictor': predictor_vars,
-                'Coefficient': regression_results['Coefficients']
-            })
-            st.dataframe(coef_df)
-            
-            # R-squared
-            st.metric("R-squared", f"{regression_results['R-squared']:.4f}")
-            
-            # Scatter plot of actual vs predicted
-            X_scaled = StandardScaler().fit_transform(X)
-            y_pred = LinearRegression().fit(X_scaled, y).predict(X_scaled)
-            
-            scatter_fig = go.Figure()
-            scatter_fig.add_trace(go.Scatter(
-                x=y, 
-                y=y_pred, 
-                mode='markers',
-                name='Actual vs Predicted'
-            ))
-            scatter_fig.add_trace(go.Scatter(
-                x=[y.min(), y.max()], 
-                y=[y.min(), y.max()], 
-                mode='lines',
-                name='Perfect Prediction Line'
-            ))
-            
-            scatter_fig.update_layout(
-                title=f'Actual vs Predicted {target_var}',
-                xaxis_title=f'Actual {target_var}',
-                yaxis_title=f'Predicted {target_var}'
-            )
-            
-            st.plotly_chart(scatter_fig, use_container_width=True)
-    
-    # Correlation & Visualization
-    elif analysis_type == "Correlation & Visualization":
-        st.header("Correlation & Advanced Visualizations")
-        
-        # Correlation Heatmap
-        st.subheader("Correlation Heatmap")
-        corr_heatmap = create_correlation_heatmap(df)
-        st.pyplot(corr_heatmap)
-        
-        # Pairplot
-        st.subheader("Pairplot of Variables")
-        pairplot = create_pairplot(df)
-        st.pyplot(pairplot)
-    
-    # Comparative Graphs
-    elif analysis_type == "Comparative Graphs":
-        st.header("Comparative Visualizations")
-        
-        # Boxplot Comparison
-        st.subheader("Boxplots by Residence")
-        boxplot_fig = create_boxplot_comparison(df)
-        st.pyplot(boxplot_fig)
-        
-        # Bar chart comparing means
-        st.subheader("Mean Comparison by Residence")
-        
-        # Variables to compare
-        compare_vars = ['education_years', 'children', 'age', 'bmi']
-        
-        # Prepare data for comparison
-        means_by_residence = df.groupby('residence')[compare_vars].mean()
-        
-        # Create bar chart
-        fig = px.bar(
-            means_by_residence.reset_index(), 
-            x='residence', 
-            y=compare_vars,
-            title='Mean Comparison of Variables by Residence',
-            barmode='group'
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Display the means
-        st.dataframe(means_by_residence)
+        # Compute and display summary statistics by residence
+        st.subheader("Summary Statistics by Residence")
+        residence_stats = df.groupby('residence')[dist_column].agg([
+            'mean', 'median', 'std', 'min', 'max'
+        ]).round(2)
+        st.dataframe(residence_stats)
 
 if __name__ == "__main__":
     main()
