@@ -1,388 +1,364 @@
 import streamlit as st
+import os
+import json
+import asyncio
 import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objs as go
-from scipy import stats
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
-import io
+import tempfile
+import time
+import nest_asyncio
+from io import StringIO
+from datetime import datetime
 
-# Page configuration
-st.set_page_config(page_title="Flexible Data Analysis Dashboard", page_icon="📊", layout="wide")
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, LLMConfig, CacheMode
+from crawl4ai.extraction_strategy import LLMExtractionStrategy
+from pydantic import BaseModel, Field
 
-# Custom CSS
+# Apply nest_asyncio to allow running asyncio within Streamlit
+nest_asyncio.apply()
+
+# Set page configuration
+st.set_page_config(
+    page_title="1mg Scraper with Crawl4AI",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better UI
 st.markdown("""
 <style>
-.main-header {
-    font-size: 2.5rem;
-    font-weight: bold;
-    color: #1E88E5;
-    text-align: center;
-    margin-bottom: 1rem;
-}
-.stat-card {
-    background-color: #f0f8ff;
-    border-radius: 10px;
-    padding: 1rem;
-    text-align: center;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    margin-bottom: 1rem;
-}
-.stat-value {
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: #1E88E5;
-}
-.stat-label {
-    font-size: 0.9rem;
-    color: #666;
-}
+    .main {
+        padding: 2rem;
+    }
+    .chat-message {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: row;
+        align-items: flex-start;
+    }
+    .chat-message.user {
+        background-color: #f0f2f6;
+    }
+    .chat-message.assistant {
+        background-color: #e6f3ff;
+    }
+    .chat-message .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        margin-right: 1rem;
+    }
+    .chat-message .message {
+        flex: 1;
+    }
+    .success {
+        color: green;
+    }
+    .error {
+        color: red;
+    }
+    .info {
+        color: blue;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Comprehensive descriptive statistics
-def get_detailed_stats(series):
-    return {
-        'Mean': series.mean(),
-        'Median': series.median(),
-        'Standard Deviation': series.std(),
-        'Minimum': series.min(),
-        'Maximum': series.max(),
-        'Skewness': series.skew(),
-        'Kurtosis': series.kurtosis()
-    }
+# Define the data structure for medicine product information
+class MedicineProduct(BaseModel):
+    name: str = Field(..., description="Name of the medicine product")
+    manufacturer: str = Field(..., description="Manufacturer/company name")
+    price: str = Field(..., description="Price of the product including currency")
+    description: str = Field(..., description="Product description or information")
+    uses: list[str] = Field(default=[], description="List of uses or indications")
+    ingredients: list[str] = Field(default=[], description="List of active ingredients")
+    dosage_form: str = Field(default="", description="Form of the medicine (tablet, syrup, etc.)")
+    prescription_required: bool = Field(default=False, description="Whether prescription is required")
 
-# Create scatter plot with regression line
-def create_scatter_with_regression(df, x_col, y_col, color_col=None):
-    # Prepare data
-    X = df[x_col].values.reshape(-1, 1)
-    y = df[y_col].values
+# Initialize session state
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
     
-    # Perform linear regression
-    reg = LinearRegression().fit(X, y)
-    y_pred = reg.predict(X)
-    
-    # Calculate R-squared and other metrics
-    r_squared = reg.score(X, y)
-    
-    # Create scatter plot with regression line
-    fig = go.Figure()
-    
-    # Scatter plot points
-    scatter_kwargs = {
-        'x': df[x_col], 
-        'y': df[y_col],
-        'mode': 'markers',
-        'name': 'Data Points',
-        'marker': {'opacity': 0.7}
-    }
-    
-    # Add color if specified
-    if color_col and color_col in df.columns:
-        scatter_kwargs['color'] = df[color_col]
-        scatter_kwargs['color_discrete_sequence'] = px.colors.qualitative.Plotly
-    
-    fig.add_trace(go.Scatter(**scatter_kwargs))
-    
-    # Regression line
-    fig.add_trace(go.Scatter(
-        x=df[x_col], 
-        y=y_pred,
-        mode='lines',
-        name='Regression Line',
-        line=dict(color='red', dash='dash')
-    ))
-    
-    # Update layout
-    fig.update_layout(
-        title=f'Scatter Plot: {x_col} vs {y_col} with Regression Line',
-        xaxis_title=x_col,
-        yaxis_title=y_col,
-        annotations=[
-            dict(
-                x=0.05,
-                y=0.95,
-                xref='paper',
-                yref='paper',
-                text=f'R² = {r_squared:.4f}',
-                showarrow=False,
-                font=dict(size=12)
-            )
-        ]
-    )
-    
-    return fig, reg, r_squared
+if 'results' not in st.session_state:
+    st.session_state.results = []
 
-# Correlation heatmap
-def create_correlation_heatmap(df):
-    # Calculate correlation matrix
-    corr_matrix = df.corr()
-    
-    # Create heatmap
-    fig = go.Figure(data=go.Heatmap(
-        z=corr_matrix.values,
-        x=corr_matrix.columns,
-        y=corr_matrix.columns,
-        colorscale='RdBu_r',
-        zmin=-1, 
-        zmax=1,
-        text=corr_matrix.values.round(2),
-        texttemplate='%{text}',
-        textfont={'size':10},
-    ))
-    
-    fig.update_layout(
-        title='Correlation Heatmap of Numeric Variables',
-        height=600,
-        width=800
-    )
-    
-    return fig
+if 'products_df' not in st.session_state:
+    st.session_state.products_df = None
 
-# Boxplot by a categorical column
-def create_boxplot(df, numeric_col, category_col):
-    fig = px.box(
-        df, 
-        x=category_col, 
-        y=numeric_col, 
-        title=f'Distribution of {numeric_col} by {category_col}',
-        color=category_col
-    )
-    return fig
-
-# Main Streamlit app
-def main():
-    st.markdown('<div class="main-header">Flexible Data Analysis Dashboard</div>', unsafe_allow_html=True)
-    
-    # Sidebar for file upload and configuration
-    st.sidebar.header("Data Configuration")
-    
-    # Sample data option
-    use_sample_data = st.sidebar.checkbox("Use Sample NFHS-4 Data", value=True)
-    
-    # File uploader or sample data
-    if use_sample_data:
-        # Predefined NFHS-4 sample data
-        data = {
-            'residence': ['urban', 'rural', 'urban', 'rural', 'urban', 'rural', 'urban', 'rural', 'urban', 'rural'],
-            'education_years': [10, 5, 12, 0, 16, 3, 8, 2, 14, 1],
-            'children': [2, 3, 1, 4, 1, 5, 2, 4, 1, 3],
-            'age': [25, 30, 35, 40, 28, 33, 32, 38, 29, 36],
-            'bmi': [22.5, 24.1, 21.8, 26.3, 23.4, 25.6, 22.1, 24.8, 21.9, 25.2]
-        }
-        df = pd.DataFrame(data)
-        st.sidebar.info("Using sample NFHS-4 like dataset")
-    else:
-        # File uploader
-        uploaded_file = st.sidebar.file_uploader("Choose a CSV file", type="csv")
+# Function to display chat messages
+def display_chat_messages():
+    for message in st.session_state.messages:
+        role = message["role"]
+        content = message["content"]
         
-        if uploaded_file is None:
-            st.warning("Please upload a CSV file or check 'Use Sample NFHS-4 Data'")
-            return
+        with st.chat_message(role):
+            st.markdown(content)
+
+# Function to parse URLs from input text
+def parse_urls(text):
+    import re
+    # Match URLs with or without http/https prefix
+    url_pattern = r'https?://(?:www\.)?1mg\.com/\S+|(?:www\.)?1mg\.com/\S+'
+    matches = re.findall(url_pattern, text)
+    
+    # Ensure all URLs have http/https prefix
+    processed_urls = []
+    for url in matches:
+        if not url.startswith(('http://', 'https://')):
+            url = 'https://' + url
+        processed_urls.append(url)
+    
+    return processed_urls
+
+# Custom logging class to capture logs
+class StreamlitLogCapture:
+    def __init__(self, progress_bar=None):
+        self.log_output = StringIO()
+        self.progress_bar = progress_bar
+        
+    def write(self, text):
+        self.log_output.write(text)
+        # Update the progress bar message
+        if self.progress_bar:
+            self.progress_bar.text(text.strip())
+        return len(text)
+    
+    def flush(self):
+        pass
+    
+    def get_logs(self):
+        return self.log_output.getvalue()
+
+# Function to display a download button for the DataFrame
+def create_download_link(df):
+    csv = df.to_csv(index=False)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"1mg_products_{timestamp}.csv"
+    
+    return csv, filename
+
+# Function to scrape 1mg products
+async def scrape_1mg_products(urls, gemini_model, api_key, progress_bar, progress_text):
+    results = []
+    
+    for i, url in enumerate(urls):
+        progress_text.text(f"Scraping product {i+1}/{len(urls)}: {url}")
+        progress_bar.progress((i) / len(urls))
         
         try:
-            # Read the uploaded file
-            df = pd.read_csv(uploaded_file)
-        except Exception as e:
-            st.error(f"Error reading the file: {e}")
-            return
-    
-    # Allow column renaming
-    st.sidebar.header("Rename Columns (Optional)")
-    renamed_columns = {}
-    for col in df.columns:
-        new_name = st.sidebar.text_input(f"Rename '{col}' to:", col)
-        renamed_columns[col] = new_name
-    
-    # Rename columns if needed
-    df.columns = [renamed_columns.get(col, col) for col in df.columns]
-    
-    # Select analysis type
-    analysis_type = st.sidebar.selectbox(
-        "Select Analysis Type",
-        [
-            "Descriptive Statistics", 
-            "Regression Analysis",
-            "Correlation Analysis",
-            "Distribution Comparison"
-        ]
-    )
-    
-    # Identify numeric columns
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    # Descriptive Statistics
-    if analysis_type == "Descriptive Statistics":
-        st.header("Descriptive Statistics")
-        
-        # Select numeric columns for analysis
-        columns_to_analyze = st.multiselect(
-            "Select Columns for Analysis",
-            numeric_cols,
-            default=numeric_cols[:min(3, len(numeric_cols))]
-        )
-        
-        # Display statistics for selected columns
-        for column in columns_to_analyze:
-            st.subheader(f"Descriptive Statistics for {column}")
-            
-            # Get detailed statistics
-            stats = get_detailed_stats(df[column])
-            
-            # Display stats in a grid
-            cols = st.columns(len(stats))
-            for i, (stat_name, stat_value) in enumerate(stats.items()):
-                with cols[i]:
-                    st.markdown(f"""
-                    <div class="stat-card">
-                        <div class="stat-value">{stat_value:.2f}</div>
-                        <div class="stat-label">{stat_name}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-    
-    # Regression Analysis
-    elif analysis_type == "Regression Analysis":
-        st.header("Regression Analysis")
-        
-        # Select variables for regression
-        st.subheader("Select Variables for Regression")
-        
-        # X variables (predictors)
-        x_columns = st.multiselect(
-            "Select Predictor Variables (X)",
-            numeric_cols,
-            default=numeric_cols[:len(numeric_cols)//2] if len(numeric_cols) > 1 else numeric_cols
-        )
-        
-        # Y variable (target)
-        y_column = st.selectbox(
-            "Select Target Variable (Y)",
-            numeric_cols,
-            index=len(numeric_cols)//2 if len(numeric_cols) > 1 else 0
-        )
-        
-        # Color by categorical variable (optional)
-        color_column = st.selectbox(
-            "Optional: Color by Categorical Variable",
-            ['None'] + categorical_cols,
-            index=0
-        )
-        color_column = color_column if color_column != 'None' else None
-        
-        # Perform regression if variables are selected
-        if x_columns and y_column and x_columns != [y_column]:
-            # Prepare data
-            X = df[x_columns]
-            y = df[y_column]
-            
-            # Split the data
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            
-            # Perform regression
-            reg = LinearRegression().fit(X_train, y_train)
-            
-            # Predictions
-            y_pred = reg.predict(X_test)
-            
-            # Evaluation metrics
-            mse = mean_squared_error(y_test, y_pred)
-            r_squared = r2_score(y_test, y_pred)
-            
-            # Display regression results
-            st.subheader("Regression Results")
-            
-            # Coefficients
-            coef_df = pd.DataFrame({
-                'Predictor': x_columns,
-                'Coefficient': reg.coef_
-            })
-            st.dataframe(coef_df)
-            
-            # Metrics
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("R-squared", f"{r_squared:.4f}")
-            with col2:
-                st.metric("Mean Squared Error", f"{mse:.4f}")
-            
-            # Create scatter plots for each predictor
-            for x_col in x_columns:
-                # Create scatter plot
-                scatter_fig, _, r_sq = create_scatter_with_regression(
-                    df, x_col, y_column, 
-                    color_col=color_column
-                )
-                st.plotly_chart(scatter_fig, use_container_width=True)
-    
-    # Correlation Analysis
-    elif analysis_type == "Correlation Analysis":
-        st.header("Correlation Analysis")
-        
-        # Create correlation heatmap
-        corr_fig = create_correlation_heatmap(df[numeric_cols])
-        st.plotly_chart(corr_fig, use_container_width=True)
-        
-        # Interpretation of correlations
-        st.subheader("Correlation Insights")
-        corr_matrix = df[numeric_cols].corr()
-        
-        # Find strongest correlations
-        corr_pairs = []
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
-                corr_pairs.append((
-                    corr_matrix.columns[i], 
-                    corr_matrix.columns[j], 
-                    corr_matrix.iloc[i, j]
-                ))
-        
-        # Sort by absolute correlation
-        sorted_corr = sorted(corr_pairs, key=lambda x: abs(x[2]), reverse=True)
-        
-        # Display top correlations
-        st.write("Top Correlations:")
-        for var1, var2, corr_value in sorted_corr[:5]:
-            st.markdown(f"- **{var1}** and **{var2}**: {corr_value:.4f}")
-    
-    # Distribution Comparison
-    elif analysis_type == "Distribution Comparison":
-        st.header("Distribution Comparison")
-        
-        # Select numeric column to compare
-        numeric_column = st.selectbox(
-            "Select Numeric Variable", 
-            numeric_cols
-        )
-        
-        # Select categorical column for comparison
-        if categorical_cols:
-            category_column = st.selectbox(
-                "Compare by Categorical Variable", 
-                categorical_cols
+            # Configure the browser
+            browser_config = BrowserConfig(
+                headless=True,
+                verbose=True
             )
             
-            # Create boxplot
-            boxplot_fig = create_boxplot(df, numeric_column, category_column)
-            st.plotly_chart(boxplot_fig, use_container_width=True)
+            # Create an extraction strategy using Gemini
+            extraction_strategy = LLMExtractionStrategy(
+                llm_config=LLMConfig(
+                    provider=f"google/{gemini_model}",
+                    api_token=api_key
+                ),
+                schema=MedicineProduct.model_json_schema(),
+                extraction_type="schema",
+                instruction="""
+                Extract detailed information about this medicine product from 1mg.com.
+                Include:
+                - Full product name
+                - Manufacturer/company name
+                - Exact price as displayed (with currency)
+                - Brief product description
+                - List of primary uses or indications
+                - Active ingredients (as a list)
+                - Form of the medicine (tablet, syrup, capsule, etc.)
+                - Whether prescription is required (true/false)
+                
+                Only extract information that is explicitly mentioned on the page.
+                If any field is not available, leave it empty or set to default.
+                """
+            )
             
-            # Compute and display summary statistics
-            st.subheader("Summary Statistics")
-            grouped_stats = df.groupby(category_column)[numeric_column].agg([
-                'mean', 'median', 'std', 'min', 'max'
-            ]).round(2)
-            st.dataframe(grouped_stats)
-        else:
-            st.warning("No categorical columns found for comparison.")
+            # Configure the crawler run
+            run_config = CrawlerRunConfig(
+                extraction_strategy=extraction_strategy,
+                cache_mode=CacheMode.BYPASS,  # Skip cache to get fresh data
+                word_count_threshold=1,  # Process even small amounts of text
+                js_code="""
+                // Close any popups or modals that might interfere with scraping
+                setTimeout(() => {
+                  const closeButtons = document.querySelectorAll('[aria-label="Close"], .close-btn, .dismiss-btn');
+                  closeButtons.forEach(btn => btn.click());
+                }, 2000);
+                """
+            )
+            
+            progress_text.text(f"Starting to scrape: {url}")
+            
+            # Initialize and run the crawler
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                result = await crawler.arun(
+                    url=url,
+                    config=run_config
+                )
+                
+                if result.success:
+                    progress_text.text(f"Successfully scraped {url}")
+                    try:
+                        parsed_content = json.loads(result.extracted_content)
+                        results.append(parsed_content)
+                    except json.JSONDecodeError:
+                        progress_text.text(f"Error parsing JSON from {url}")
+                else:
+                    progress_text.text(f"Failed to scrape {url}: {result.error_message}")
+        
+        except Exception as e:
+            progress_text.text(f"Error scraping {url}: {str(e)}")
+    
+    progress_bar.progress(1.0)
+    progress_text.text("Scraping completed!")
+    
+    return results
 
-    # Raw Data View
-    st.sidebar.header("Data Preview")
-    if st.sidebar.checkbox("Show Raw Data"):
-        st.subheader("Raw Data")
-        st.dataframe(df)
+# Sidebar for configuration
+with st.sidebar:
+    st.title("Configuration")
+    
+    gemini_api_key = st.text_input("Gemini API Key", type="password")
+    
+    gemini_model = st.selectbox(
+        "Select Gemini Model",
+        ["gemini-pro", "gemini-1.5-pro", "gemini-1.5-flash"]
+    )
+    
+    st.markdown("---")
+    st.markdown("### About")
+    st.markdown("""
+    This app uses Crawl4AI to scrape product information from 1mg.com.
+    
+    Enter URLs or a description of what you want to scrape in the chat.
+    
+    The app will extract structured data and provide a downloadable CSV.
+    """)
 
-if __name__ == "__main__":
-    main()
+# Main content
+st.title("1mg Scraper with Crawl4AI 🔍")
+st.markdown("Chat with the scraper to extract product information from 1mg.com")
+
+# Display chat history
+display_chat_messages()
+
+# Display product data if available
+if st.session_state.products_df is not None:
+    st.markdown("## Scraped Products")
+    st.dataframe(st.session_state.products_df)
+    
+    # Create download button
+    csv_data, filename = create_download_link(st.session_state.products_df)
+    st.download_button(
+        label="Download CSV",
+        data=csv_data,
+        file_name=filename,
+        mime="text/csv"
+    )
+
+# Chat input
+if prompt := st.chat_input("Enter URLs or describe what you want to scrape"):
+    # Add user message to chat
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # Display the new message
+    with st.chat_message("user"):
+        st.markdown(prompt)
+    
+    # Check if API key is provided
+    if not gemini_api_key:
+        with st.chat_message("assistant"):
+            st.markdown("⚠️ Please enter your Gemini API key in the sidebar to continue.")
+        st.session_state.messages.append({"role": "assistant", "content": "⚠️ Please enter your Gemini API key in the sidebar to continue."})
+    else:
+        # Extract URLs from input
+        urls = parse_urls(prompt)
+        
+        # Respond based on input
+        with st.chat_message("assistant"):
+            if urls:
+                st.markdown(f"Found {len(urls)} 1mg URLs to scrape:")
+                for url in urls:
+                    st.markdown(f"- {url}")
+                
+                st.markdown("Starting to scrape these products...")
+                
+                # Initialize progress bar
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                
+                # Set up event loop for async operation
+                loop = asyncio.get_event_loop()
+                results = loop.run_until_complete(
+                    scrape_1mg_products(urls, gemini_model, gemini_api_key, progress_bar, progress_text)
+                )
+                
+                if results:
+                    st.session_state.results = results
+                    st.session_state.products_df = pd.DataFrame(results)
+                    
+                    st.markdown("### Scraping Results")
+                    st.dataframe(st.session_state.products_df)
+                    
+                    # Create download button
+                    csv_data, filename = create_download_link(st.session_state.products_df)
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv_data,
+                        file_name=filename,
+                        mime="text/csv"
+                    )
+                    
+                    response_content = f"✅ Successfully scraped {len(results)} products! You can download the CSV using the button above."
+                else:
+                    response_content = "❌ No products were successfully scraped. Please check the URLs and try again."
+            else:
+                # No URLs found, provide guidance
+                response_content = """
+                I didn't find any 1mg.com URLs in your message. 
+                
+                You can:
+                1. Provide specific 1mg.com product URLs to scrape
+                2. Ask me to explain how to use this app
+                
+                Example URLs:
+                - https://www.1mg.com/drugs/crocin-advance-tablet-138496
+                - https://www.1mg.com/drugs/dolo-650-tablet-150385
+                """
+            
+            st.markdown(response_content)
+            st.session_state.messages.append({"role": "assistant", "content": response_content})
+
+# Add instructions at the bottom
+with st.expander("How to use this app"):
+    st.markdown("""
+    ## Instructions
+    
+    1. Enter your Gemini API key in the sidebar
+    2. Select the Gemini model you want to use
+    3. Enter 1mg.com product URLs in the chat input
+    4. The app will scrape the products and display the results
+    5. Download the CSV file with the extracted data
+    
+    ## Example URLs
+    
+    ```
+    https://www.1mg.com/drugs/crocin-advance-tablet-138496
+    https://www.1mg.com/drugs/dolo-650-tablet-150385
+    https://www.1mg.com/drugs/azithral-500-tablet-14367
+    ```
+    
+    ## Troubleshooting
+    
+    If you encounter issues:
+    
+    - Make sure your API key is correct
+    - Check if the URLs are valid 1mg.com product pages
+    - Try a different Gemini model
+    """)
